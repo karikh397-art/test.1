@@ -1,0 +1,169 @@
+import os, json, uuid, zipfile, math
+from PIL import Image, ImageDraw
+root="/mnt/data/Chroniques_du_Neant"
+bp=os.path.join(root,"Chroniques_BP")
+rp=os.path.join(root,"Chroniques_RP")
+for p in [bp,rp]:
+    os.makedirs(p,exist_ok=True)
+for sub in ["blocks","items","recipes","loot_tables/blocks"]:
+    os.makedirs(os.path.join(bp,sub),exist_ok=True)
+for sub in ["textures/blocks","textures/items"]:
+    os.makedirs(os.path.join(rp,sub),exist_ok=True)
+
+bp_header=str(uuid.uuid4()); bp_data=str(uuid.uuid4())
+rp_header=str(uuid.uuid4()); rp_res=str(uuid.uuid4())
+manifest_bp={
+ "format_version":2,
+ "header":{"name":"Chroniques du Néant | Gameplay","description":"10 minerais, 10 matériaux et 10 armes forgées.","uuid":bp_header,"version":[1,0,0],"min_engine_version":[1,21,0]},
+ "modules":[{"type":"data","uuid":bp_data,"version":[1,0,0]}],
+ "dependencies":[{"uuid":rp_header,"version":[1,0,0]}]
+}
+manifest_rp={
+ "format_version":2,
+ "header":{"name":"Chroniques du Néant | Textures","description":"Textures pixel-art originales pour les minerais et armes.","uuid":rp_header,"version":[1,0,0],"min_engine_version":[1,21,0]},
+ "modules":[{"type":"resources","uuid":rp_res,"version":[1,0,0]}]
+}
+for path,obj in [(os.path.join(bp,"manifest.json"),manifest_bp),(os.path.join(rp,"manifest.json"),manifest_rp)]:
+    with open(path,"w",encoding="utf-8") as f: json.dump(obj,f,indent=2,ensure_ascii=False)
+
+ores=[
+ ("ambre","Ambre","C8/5B/22","f4a340"),
+ ("saphir","Saphir","1D/4F/9B","54b9ff"),
+ ("rubis","Rubis","8F/20/36","ff5268"),
+ ("jade","Jade","1C/75/58","45e6a1"),
+ ("amethyste","Améthyste","5A/2B/8D","c18bff"),
+ ("topaze","Topaze","A5/83/24","ffe36e"),
+ ("onyx","Onyx","25/25/32","9696ad"),
+ ("cobalt","Cobalt","1D/3C/76","568bff"),
+ ("solaire","Pierre solaire","B8/4E/13","ff9e3d"),
+ ("neant","Cristal du Néant","32/1D/52","d18cff")
+]
+# create crisp pixel textures
+def crystal_texture(path, base, bright, seed):
+    im=Image.new("RGBA",(16,16),(0,0,0,0)); d=ImageDraw.Draw(im)
+    # stone background with subtle speckles
+    d.rectangle((0,0,15,15),fill=(65,62,68,255))
+    for i in range(28):
+        x=(i*7+seed*3)%16; y=(i*11+seed)%16
+        c=(82+(i%3)*8,78+(i%4)*5,82+(i%2)*7,255)
+        d.point((x,y),fill=c)
+    # ore veins
+    for x,y in [(3,3),(10,2),(7,8),(12,12),(2,13)]:
+        d.polygon([(x,y-2),(x+2,y),(x,y+3),(x-2,y)],fill=base,outline=bright)
+        d.point((x,y-1),fill=(255,255,255,255))
+    im.resize((64,64),Image.Resampling.NEAREST).save(path)
+
+def hexrgb(s):
+    s=s.replace("/","")
+    return tuple(int(s[i:i+2],16) for i in (0,2,4))+(255,)
+for idx,(key,name,bhex,brighthex) in enumerate(ores):
+    crystal_texture(os.path.join(rp,"textures/blocks",key+"_ore.png"),hexrgb(bhex),hexrgb(brighthex),idx+1)
+    # ore block
+    block={
+      "format_version":"1.21.0",
+      "minecraft:block":{
+        "description":{"identifier":f"void:{key}_ore","menu_category":{"category":"nature","group":"itemGroup.name.ore"}},
+        "components":{
+          "minecraft:destructible_by_mining":{"seconds_to_destroy":3.0},
+          "minecraft:destructible_by_explosion":{"explosion_resistance":5.0},
+          "minecraft:collision_box":True,
+          "minecraft:selection_box":True,
+          "minecraft:geometry":"minecraft:geometry.full_block",
+          "minecraft:material_instances":{"*":{"texture":key+"_ore","render_method":"opaque"}}
+        }
+      }
+    }
+    with open(os.path.join(bp,"blocks",key+"_ore.json"),"w") as f: json.dump(block,f,indent=2)
+    # ore loot: material item
+    loot={"pools":[{"rolls":1,"entries":[{"type":"item","name":f"void:{key}_shard","weight":1}]}]}
+    with open(os.path.join(bp,"loot_tables/blocks",key+"_ore.json"),"w") as f: json.dump(loot,f,indent=2)
+    # material item
+    item={
+      "format_version":"1.21.0",
+      "minecraft:item":{
+        "description":{"identifier":f"void:{key}_shard","menu_category":{"category":"items"}},
+        "components":{"minecraft:icon":{"texture":key+"_shard"},"minecraft:display_name":{"value":name+" — éclat"},"minecraft:max_stack_size":64}
+      }
+    }
+    with open(os.path.join(bp,"items",key+"_shard.json"),"w",encoding="utf-8") as f: json.dump(item,f,indent=2,ensure_ascii=False)
+    # shard texture
+    im=Image.new("RGBA",(16,16),(0,0,0,0)); d=ImageDraw.Draw(im)
+    col=hexrgb(bhex); hi=hexrgb(brighthex)
+    d.polygon([(8,1),(13,6),(10,15),(5,13),(3,7)],fill=col,outline=hi)
+    d.polygon([(8,1),(8,12),(3,7)],fill=hi)
+    d.line((8,2,8,12),fill=(255,255,255,220))
+    im.resize((64,64),Image.Resampling.NEAREST).save(os.path.join(rp,"textures/items",key+"_shard.png"))
+
+# Ten themed weapons, one per ore; recipes use sticks + shard
+weapon_specs=[
+ ("epee_ambre","Épée d'ambre",7),("lame_saphir","Lame de saphir",8),("epee_rubis","Épée rubis",9),
+ ("fendoir_jade","Fendoir de jade",8),("sabre_amethyste","Sabre améthyste",9),
+ ("hache_topaze","Hache topaze",10),("lame_onyx","Lame d'onyx",9),("epee_cobalt","Épée cobalt",10),
+ ("glaive_solaire","Glaive solaire",11),("lame_neant","Lame du Néant",13)
+]
+for i,(ident,display,damage) in enumerate(weapon_specs):
+    orekey=ores[i][0]
+    item={
+      "format_version":"1.21.0",
+      "minecraft:item":{
+        "description":{"identifier":f"void:{ident}","menu_category":{"category":"equipment"}},
+        "components":{
+          "minecraft:icon":{"texture":ident},
+          "minecraft:display_name":{"value":display},
+          "minecraft:max_stack_size":1,
+          "minecraft:hand_equipped":True,
+          "minecraft:damage":damage,
+          "minecraft:durability":{"max_durability":450+i*90},
+          "minecraft:enchantable":{"value":15+i*2,"slot":"sword"}
+        }
+      }
+    }
+    with open(os.path.join(bp,"items",ident+".json"),"w",encoding="utf-8") as f: json.dump(item,f,indent=2,ensure_ascii=False)
+    # weapon icon
+    im=Image.new("RGBA",(16,16),(0,0,0,0)); d=ImageDraw.Draw(im)
+    c=hexrgb(ores[i][2]); hi=hexrgb(ores[i][3])
+    d.line((3,13,12,4),fill=(75,54,42,255),width=3)
+    d.line((2,12,11,3),fill=c,width=3)
+    d.point((11,3),fill=(255,255,255,255))
+    d.line((2,10,6,14),fill=hi,width=2)
+    im.resize((64,64),Image.Resampling.NEAREST).save(os.path.join(rp,"textures/items",ident+".png"))
+    # shaped recipe with shard and sticks
+    recipe={
+      "format_version":"1.20.10",
+      "minecraft:recipe_shaped":{
+        "description":{"identifier":f"void:{ident}_recipe"},
+        "tags":["crafting_table"],
+        "pattern":[" X "," X "," S "],
+        "key":{"X":{"item":f"void:{orekey}_shard"},"S":{"item":"minecraft:stick"}},
+        "unlock":[{"item":f"void:{orekey}_shard"}],
+        "result":{"item":f"void:{ident}","count":1}
+      }
+    }
+    with open(os.path.join(bp,"recipes",ident+".json"),"w") as f: json.dump(recipe,f,indent=2)
+
+# Texture atlases
+terrain={"resource_pack_name":"Chroniques du Néant","texture_name":"atlas.terrain","padding":8,"num_mip_levels":4,"texture_data":{}}
+for key,*_ in ores:
+    terrain["texture_data"][key+"_ore"]={"textures":"textures/blocks/"+key+"_ore"}
+with open(os.path.join(rp,"textures/terrain_texture.json"),"w") as f: json.dump(terrain,f,indent=2)
+items_atlas={"resource_pack_name":"Chroniques du Néant","texture_name":"atlas.items","texture_data":{}}
+for key,*_ in ores: items_atlas["texture_data"][key+"_shard"]={"textures":"textures/items/"+key+"_shard"}
+for ident,_,_ in weapon_specs: items_atlas["texture_data"][ident]={"textures":"textures/items/"+ident}
+with open(os.path.join(rp,"textures/item_texture.json"),"w") as f: json.dump(items_atlas,f,indent=2)
+
+# Add block loot component to blocks now
+for key,*_ in ores:
+    path=os.path.join(bp,"blocks",key+"_ore.json")
+    obj=json.load(open(path))
+    obj["minecraft:block"]["components"]["minecraft:loot"]=f"loot_tables/blocks/{key}_ore.json"
+    with open(path,"w") as f: json.dump(obj,f,indent=2)
+
+# pack icon
+def make_pack_icon(path, title):
+    im=Image.new("RGBA",(128,128),(19,14,35,255)); d=ImageDraw.Draw(im)
+    d.ellipse((14,14,114,114),fill=(47,27,76,255),outline=(194,139,255,255),width=5)
+    d.polygon([(64,20),(94,54),(76,104),(49,100),(31,57)],fill=(117,61,177,255),outline=(224,188,255,255))
+    d.polygon([(64,20),(64,96),(31,57)],fill=(211,147,255,255))
+    d.line((64,25,64,94),fill=(255,255,255,220),width=3)
+    im.save(path)
+for folder in [bp,rp]: make_pack_icon(os.path.join(folder
